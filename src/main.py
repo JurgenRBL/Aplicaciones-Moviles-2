@@ -72,7 +72,10 @@ class App:
             layers=[fm.TileLayer(url_template="https://tile.openstreetmap.org/{z}/{x}/{y}.png",
                 user_agent_package_name="bo.edu.udabol.alertasegura/1.0 (MascotasPerdidas/1.1 local pet reports)",
                 on_image_error=self.tile_error), self.markers])
-        self.switcher = ft.AnimatedSwitcher(content=ft.Container(), transition=ft.AnimatedSwitcherTransition.FADE, duration=280, expand=True)
+        # Flet 0.86.5 AnimatedSwitcher builds its child with a new UniqueKey on
+        # updates. That disposes the native camera during state/button updates.
+        # Keep the screen mounted under a stable container instead.
+        self.switcher = ft.Container(content=ft.Container(), expand=True)
         self.body = ft.Container(content=self.switcher, expand=True, padding=16)
         self.nav = ft.NavigationBar(selected_index=0, on_change=self.navigate,
             destinations=[ft.NavigationBarDestination(icon=icon, label=label) for icon, label in [
@@ -251,8 +254,6 @@ class App:
                     on_click=lambda e, item=r: self.detail(item))) for r in records] +
                 ([] if records else [fl.Lottie(src="huellitas.json", height=140, animate=True), ft.Text("Aún no hay reportes. Cada búsqueda comienza con una huellita.")]))
         self.switcher.content = content
-        # Avoid overlapping camera widgets while navigating on older Android devices.
-        self.switcher.duration = 0 if index == 2 else 280
         self.update_recording_ui()
         self.page.update()
 
