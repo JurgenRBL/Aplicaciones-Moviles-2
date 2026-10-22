@@ -10,6 +10,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from storage import Storage
 from main import App
 import flet_geolocator as fg
+import flet_camera as fc
+import flet_permission_handler as fp
 
 
 class FakePage:
@@ -115,6 +117,7 @@ class ServiceFlowTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as directory:
             app = App(FakePage(), Storage(directory))
             app.camera = SimpleNamespace(take_picture=AsyncMock(return_value=b"image bytes"),
+                prepare_for_video_recording=AsyncMock(),
                 start_video_recording=AsyncMock(), stop_video_recording=AsyncMock(return_value=b"video bytes"))
             app.camera_ready = True
             await app.photo(None)
@@ -142,6 +145,50 @@ class ServiceFlowTests(unittest.IsolatedAsyncioTestCase):
             self.assertIsNone(app.recording)
             self.assertEqual(Path(app.evidence["audio"]).read_bytes(), b"audio bytes")
 
+
+    async def test_capture_initializes_camera_automatically(self):
+        for action in ("photo", "video"):
+            with self.subTest(action=action), tempfile.TemporaryDirectory() as directory:
+                app = App(FakePage(), Storage(directory))
+                app.camera_supported = True
+                app.permissions = SimpleNamespace(request=AsyncMock(return_value=fp.PermissionStatus.GRANTED))
+                back = SimpleNamespace(lens_direction=fc.CameraLensDirection.BACK)
+                front = SimpleNamespace(lens_direction=fc.CameraLensDirection.FRONT)
+
+                async def initialize(**kwargs):
+                    self.assertIs(kwargs["description"], back)
+                    self.assertTrue(app.camera_busy)
+                    app.on_camera_state(SimpleNamespace(is_initialized=True, has_error=False))
+
+                app.camera = SimpleNamespace(get_available_cameras=AsyncMock(return_value=[front, back]),
+                    initialize=AsyncMock(side_effect=initialize), take_picture=AsyncMock(return_value=b"photo"),
+                    prepare_for_video_recording=AsyncMock(), start_video_recording=AsyncMock())
+                await getattr(app, action)(None)
+                app.camera.initialize.assert_awaited_once()
+                self.assertTrue(app.camera_ready)
+                self.assertFalse(app.camera_busy)
+                self.assertFalse(app.media_busy)
+                if action == "photo":
+                    self.assertEqual(Path(app.evidence["photo"]).read_bytes(), b"photo")
+                else:
+                    app.camera.prepare_for_video_recording.assert_awaited_once()
+                    app.camera.start_video_recording.assert_awaited_once()
+                    self.assertEqual(app.recording, "video")
+                app.on_camera_state(SimpleNamespace(is_initialized=False, has_error=False))
+                self.assertFalse(app.camera_ready)
+
+    async def test_camera_permission_denied_recovers_controls(self):
+        with tempfile.TemporaryDirectory() as directory:
+            app = App(FakePage(), Storage(directory))
+            app.camera_supported = True
+            app.permissions = SimpleNamespace(request=AsyncMock(return_value=fp.PermissionStatus.DENIED))
+            app.camera = SimpleNamespace(start_video_recording=AsyncMock())
+            await app.video(None)
+            app.camera.start_video_recording.assert_not_awaited()
+            self.assertFalse(app.camera_busy)
+            self.assertFalse(app.media_busy)
+            self.assertFalse(app.video_button.disabled)
+            self.assertIn("Permiso de cámara denegado", app.camera_status.value)
 
     async def test_map_links_and_stop_failure_recovery(self):
         with tempfile.TemporaryDirectory() as directory:

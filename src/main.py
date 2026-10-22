@@ -29,7 +29,12 @@ class App:
         self.evidence = {}
         self.recording = None
         self.camera_ready = False
+        self.camera_busy = False
+        self.camera_lock = asyncio.Lock()
+        self.camera_signal = asyncio.Event()
+        self.camera_error = None
         self.media_busy = False
+        self.media_hint = "Preparando captura…"
         self.record_started = 0
         self.record_epoch = 0
         self.focus_location = None
@@ -57,7 +62,8 @@ class App:
         self.audio_button = self.button("Grabar nota de voz", self.audio, ft.Icons.MIC)
         self.camera_button = self.button("Abrir cámara", self.open_camera, ft.Icons.CAMERA_ALT)
         self.save_button = self.button("Guardar reporte", self.save, ft.Icons.PETS)
-        self.camera = fc.Camera(height=240, preview_enabled=True)
+        self.camera_status = ft.Text("La cámara se abrirá al tomar una foto o grabar un video.", color=BLUE)
+        self.camera = fc.Camera(height=240, preview_enabled=True, on_state_change=self.on_camera_state)
         self.attachments = ft.Column()
         self.markers = fm.MarkerLayer(markers=[])
         self.map_status = ft.Text("El mapa requiere Internet. Toca un punto para reportar allí.")
@@ -140,14 +146,15 @@ class App:
         self.audio_button.content = "Detener nota de voz" if active == "audio" else "Grabar nota de voz"
         self.video_button.icon = ft.Icons.STOP_CIRCLE if active == "video" else ft.Icons.VIDEOCAM
         self.audio_button.icon = ft.Icons.STOP_CIRCLE if active == "audio" else ft.Icons.MIC
-        self.video_button.disabled = self.media_busy or active == "audio"
-        self.audio_button.disabled = self.media_busy or active == "video"
-        self.photo_button.disabled = bool(active) or self.media_busy
-        self.camera_button.disabled = bool(active) or self.media_busy
-        self.save_button.disabled = bool(active) or self.media_busy
+        self.video_button.disabled = self.media_busy or self.camera_busy or active == "audio"
+        self.audio_button.disabled = self.media_busy or self.camera_busy or active == "video"
+        self.photo_button.disabled = bool(active) or self.media_busy or self.camera_busy
+        self.camera_button.disabled = bool(active) or self.media_busy or self.camera_busy or self.camera_ready
+        self.camera_button.content = "Preparando cámara…" if self.camera_busy else ("Cámara lista" if self.camera_ready else "Abrir cámara")
+        self.save_button.disabled = bool(active) or self.media_busy or self.camera_busy
         self.record_indicator.visible = bool(active) or self.media_busy
         if self.media_busy:
-            self.record_text.value = "Un momento… procesando grabación"
+            self.record_text.value = self.media_hint
         elif active:
             elapsed = max(0, int(time.monotonic() - self.record_started))
             self.record_text.value = f"● Grabando {'video' if active == 'video' else 'audio'}  {elapsed // 60:02d}:{elapsed % 60:02d}"
@@ -202,7 +209,7 @@ class App:
                 ft.Row([self.button("Usar mi ubicación", self.locate, ft.Icons.MY_LOCATION),
                     self.button("Elegir lugar", lambda e: self.show(1), ft.Icons.MAP)], wrap=True)]),
             self.card([ft.Text("Fotos y recuerdos que ayudan", size=19, weight=ft.FontWeight.BOLD, color=BLUE),
-                ft.Text("Puedes añadir una foto, un video breve y una nota de voz."), self.camera_button,
+                ft.Text("Puedes añadir una foto, un video breve y una nota de voz."), self.camera_button, self.camera_status,
                 self.camera if self.camera_supported else ft.Text("La cámara está disponible al instalar el APK en Android."),
                 self.record_indicator,
                 ft.Row([self.photo_button, self.video_button, self.audio_button], wrap=True),
@@ -213,7 +220,7 @@ class App:
         self.show(e.control.selected_index)
 
     def show(self, index):
-        if self.recording or self.media_busy:
+        if self.recording or self.media_busy or self.camera_busy:
             self.nav.selected_index = 2
             self.message("Detén la grabación antes de cambiar de sección.")
             return
@@ -233,6 +240,8 @@ class App:
             content = self.form()
             # Unmounting the camera releases the native controller.
             self.camera_ready = False
+            self.camera_signal.clear()
+            self.camera_status.value = "La cámara se abrirá al tomar una foto o grabar un video."
         else:
             records = self.storage.all()
             content = self.column([ft.Text("Mis reportes", size=26), ft.Text(NOTICE, color=RED)] + [
@@ -242,6 +251,9 @@ class App:
                     on_click=lambda e, item=r: self.detail(item))) for r in records] +
                 ([] if records else [fl.Lottie(src="huellitas.json", height=140, animate=True), ft.Text("Aún no hay reportes. Cada búsqueda comienza con una huellita.")]))
         self.switcher.content = content
+        # Avoid overlapping camera widgets while navigating on older Android devices.
+        self.switcher.duration = 0 if index == 2 else 280
+        self.update_recording_ui()
         self.page.update()
 
     def map_tap(self, e):
@@ -280,21 +292,55 @@ class App:
         except Exception as ex:
             self.message(f"No se pudo centrar el mapa: {ex}")
 
-    async def open_camera(self, e):
-        try:
+    def on_camera_state(self, event):
+        self.camera_error = getattr(event, "error_description", None) if getattr(event, "has_error", False) else None
+        self.camera_ready = bool(event.is_initialized) and not self.camera_error
+        if self.camera_ready or self.camera_error:
+            self.camera_signal.set()
+        if self.camera_error:
+            self.camera_status.value = f"La cámara necesita volver a abrirse: {self.camera_error}"
+        elif self.camera_ready:
+            self.camera_status.value = "Cámara lista. Ya puedes tomar fotos o grabar video."
+        self.update_recording_ui()
+
+    async def ensure_camera(self):
+        async with self.camera_lock:
+            if self.camera_ready:
+                return
             if not self.camera_supported:
                 raise ValueError("La extensión de cámara no admite Windows. Usa el APK en Android.")
-            if self.recording:
-                raise ValueError("Detén primero la grabación.")
-            status = await self.permissions.request(fp.Permission.CAMERA)
-            if status != fp.PermissionStatus.GRANTED:
-                raise ValueError("Permiso de cámara denegado. Revísalo en Ajustes.")
-            cameras = await self.camera.get_available_cameras()
-            if not cameras:
-                raise ValueError("No hay cámaras disponibles en este dispositivo.")
-            # Video sin sonido: la nota de voz se captura de forma independiente.
-            await self.camera.initialize(cameras[0], fc.ResolutionPreset.MEDIUM, enable_audio=False)
-            self.camera_ready = True
+            self.camera_busy = True
+            self.camera_status.value = "Preparando cámara… espera a que aparezca la imagen."
+            self.update_recording_ui()
+            try:
+                status = await self.permissions.request(fp.Permission.CAMERA)
+                if status != fp.PermissionStatus.GRANTED:
+                    raise ValueError("Permiso de cámara denegado. Actívalo en Ajustes → Aplicaciones → Mascotas Perdidas → Permisos.")
+                cameras = await self.camera.get_available_cameras()
+                if not cameras:
+                    raise ValueError("No hay cámaras disponibles en este dispositivo.")
+                selected = next((c for c in cameras if c.lens_direction == fc.CameraLensDirection.BACK), cameras[0])
+                self.camera_signal.clear()
+                self.camera_error = None
+                await asyncio.wait_for(self.camera.initialize(description=selected,
+                    resolution_preset=fc.ResolutionPreset.MEDIUM, enable_audio=False), timeout=25)
+                await asyncio.wait_for(self.camera_signal.wait(), timeout=8)
+                if not self.camera_ready:
+                    raise ValueError(self.camera_error or "No se confirmó la inicialización de la cámara.")
+            except Exception as ex:
+                self.camera_ready = False
+                self.camera_signal.clear()
+                self.camera_status.value = f"No se pudo abrir la cámara: {ex or 'se agotó el tiempo de espera'}. Vuelve a pulsar Tomar foto o Grabar video."
+                raise
+            finally:
+                self.camera_busy = False
+                self.update_recording_ui()
+
+    async def open_camera(self, e):
+        if self.media_busy or self.recording or self.camera_busy:
+            return
+        try:
+            await self.ensure_camera()
             self.message("Cámara lista. El video se graba sin sonido; puedes añadir una nota de voz.")
         except Exception as ex:
             self.camera_ready = False
@@ -309,18 +355,29 @@ class App:
         self.render_evidence()
 
     async def photo(self, e):
+        if self.media_busy or self.recording or self.camera_busy:
+            return
+        self.media_busy = True
+        self.media_hint = "Preparando fotografía…"
+        self.update_recording_ui()
         try:
-            if not self.camera_ready or self.recording:
-                raise ValueError("Activa la cámara y detén cualquier grabación.")
+            await self.ensure_camera()
+            self.media_hint = "Tomando fotografía…"
+            self.update_recording_ui()
             self.captured(await self.camera.take_picture(), "photo", ".jpg")
             self.message("Fotografía adjuntada.")
         except Exception as ex:
+            self.camera_ready = False
             self.message(f"No se pudo tomar la foto: {ex}")
+        finally:
+            self.media_busy = False
+            self.update_recording_ui()
 
     async def video(self, e):
         if self.media_busy:
             return
         self.media_busy = True
+        self.media_hint = "Guardando video…" if self.recording == "video" else "Preparando video…"
         self.update_recording_ui()
         try:
             if self.recording == "video":
@@ -330,13 +387,14 @@ class App:
                 self.message("Video adjuntado.")
             elif self.recording:
                 raise ValueError("Detén primero el audio.")
-            elif not self.camera_ready:
-                raise ValueError("Activa primero la cámara.")
             else:
+                await self.ensure_camera()
+                await self.camera.prepare_for_video_recording()
                 await self.camera.start_video_recording()
                 self.begin_recording("video")
                 self.message("Grabando video. Pulsa otra vez para detener.")
         except Exception as ex:
+            self.camera_ready = False
             if self.recording == "video":
                 self.recording = None
                 self.camera_ready = False
@@ -350,6 +408,7 @@ class App:
         if self.media_busy:
             return
         self.media_busy = True
+        self.media_hint = "Guardando nota de voz…" if self.recording == "audio" else "Preparando micrófono…"
         self.update_recording_ui()
         try:
             if self.recording == "audio":

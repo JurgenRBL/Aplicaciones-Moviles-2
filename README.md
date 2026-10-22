@@ -14,9 +14,9 @@ Una app para guardar reportes de mascotas perdidas, encontradas, avistamientos y
 
 **Ubicación:** usa tu ubicación actual si estás en el lugar o elige otro punto tocando el mapa. Añade una referencia reconocible, como el barrio, una plaza o un negocio cercano. El reporte muestra el lugar en un mapa y permite abrirlo en Google Maps; no necesitas interpretar coordenadas.
 
-**Fotografía:** abre la cámara, toma una foto y revisa la imagen antes de guardar el reporte.
+**Fotografía:** pulsa **Tomar foto**. La app solicita el permiso si hace falta, abre la cámara automáticamente y espera a que esté lista antes de capturar. Revisa la imagen antes de guardar el reporte. También puedes pulsar **Abrir cámara** para ver la imagen en vivo primero.
 
-**Video y voz:** pulsa **Grabar video** o **Grabar nota de voz**. Un aviso animado y un contador indican cuándo está grabando. El botón cambia a **Detener**; al pulsarlo, el archivo se adjunta al reporte. Puedes reproducirlo antes y después de guardar. El video se graba sin sonido; puedes acompañarlo de una nota de voz.
+**Video y voz:** pulsa **Grabar video** o **Grabar nota de voz**. El video abre la cámara automáticamente si aún no está lista: no necesitas activarla por separado. Espera el aviso de preparación. Un aviso animado y un contador indican cuándo está grabando. El botón cambia a **Detener**; al pulsarlo, el archivo se adjunta al reporte. Puedes reproducirlo antes y después de guardar. El video se graba sin sonido; puedes acompañarlo de una nota de voz.
 
 **Mis reportes:** consulta tus registros con su fecha, descripción, lugar y archivos adjuntos. Abre un reporte para ver las imágenes, reproducir video o audio y consultar su ubicación en el mapa.
 
