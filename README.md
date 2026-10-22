@@ -54,39 +54,6 @@ Se utiliza `https://tile.openstreetmap.org/{z}/{x}/{y}.png`, con identificación
 
 El endpoint de clase `https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}` coincide técnicamente con la plantilla XYZ, pero no se habilita porque no se confirmó autorización para acceder directamente a ese endpoint. La [API oficial de teselas satelitales](https://developers.google.com/maps/documentation/tile/satellite) requiere clave y sesión, además de sus [políticas de uso](https://developers.google.com/maps/documentation/tile/policies). OSM mantiene el proyecto sencillo y sin claves.
 
-## Verificación y límites
-
-**Entrega verificada el 22/10/2026:** compilación Android finalizada correctamente, APK ARM64 en `build/apk/alerta-segura.apk` (aproximadamente 71 MB). Nombre y paquete comprobados con `aapt`; mínimo API 24, objetivo API 36. Firma APK v2 verificada con `apksigner`. Compilación Python, compatibilidad de dependencias y las cinco pruebas automatizadas completadas correctamente.
-
-Copia `build/apk/alerta-segura.apk` a un teléfono Android 7 o posterior con procesador ARM64, abre el archivo e instala la aplicación. Android puede pedir habilitar la instalación desde esa aplicación de archivos. Después abre **Alerta Segura** y concede cámara, micrófono y ubicación cuando los utilices. No hace falta configurar una clave de mapas.
-
-### Instalación en el celular
-
-Descarga el APK desde [Releases de este proyecto](https://github.com/JurgenRBL/Aplicaciones-Moviles-2/releases/latest) directamente en el teléfono, o utiliza la copia local siguiendo estos pasos:
-
-1. Conecta el teléfono Android a la computadora mediante un cable USB y selecciona **Transferencia de archivos**.
-2. Copia `build/apk/alerta-segura.apk` a la carpeta **Descargas** del teléfono.
-3. En el teléfono, abre **Archivos → Descargas → alerta-segura.apk** y pulsa **Instalar**. Si Android lo pide, permite instalar desde esa aplicación de archivos.
-4. Abre **Alerta Segura**, entra a **Reportar** y concede los permisos al utilizar cámara, audio y GPS. Prueba un incidente y vuelve a abrir la aplicación para comprobar su persistencia.
-
-Para instalar desde una computadora con ADB, habilita **Depuración USB**, conecta y desbloquea el teléfono y acepta la autorización de esa computadora. Ejecuta `adb devices` y luego `adb install -r build/apk/alerta-segura.apk`. La opción `-r` actualiza una instalación compatible conservando sus datos; no es necesario desinstalar antes. Consulta la [documentación oficial de ADB](https://developer.android.com/tools/adb) y las [opciones de distribución de Android](https://developer.android.com/distribute/marketing-tools/alternative-distribution).
-
-El APK es para Android y no puede instalarse en iPhone. La instalación del APK funciona sin GitHub; para distribuirlo desde GitHub se puede adjuntar a una Release, mientras el código fuente se publica sin `.venv`, carpetas de compilación ni registros personales.
-
-**Samsung Galaxy S7 edge:** comprueba la versión en **Ajustes → Acerca del teléfono → Información de software → Versión de Android**. Este APK necesita Android 7 o posterior y ARM64. Samsung publicó Android 8 para variantes del S7 edge, como [SM-G935F](https://doc.samsungmobile.com/SM-G935F/004681190404/eng.html); eso no confirma la versión instalada en tu unidad. Si aún tiene Android 6, este APK no podrá instalarse. En Android 8, al abrir el APK, permite la instalación desde **Mis archivos** o el navegador cuando el sistema lo solicite. En Android 7, el ajuste puede aparecer como **Orígenes desconocidos** dentro de Seguridad. Después de instalar, prueba foto, video breve, voz y GPS antes de la exposición; todavía no se ha validado el hardware de ese teléfono.
-
-```powershell
-.\.venv\Scripts\python -m compileall -q src
-.\.venv\Scripts\python -m pip check
-.\.venv\Scripts\python -m unittest discover -s tests -v
-```
-
-Las cinco pruebas automáticas comprueban validación, persistencia tras reabrir SQLite, conservación de evidencias tras borrar el original, construcción y cambio de las cuatro pantallas, guardado desde formulario y actualización de marcadores. También comprueban GPS desactivado, permisos denegados y flujos de captura con servicios simulados. Las pruebas de interfaz usan un Page simulado: no acreditan renderizado ni interacción nativa.
-
-Pendiente validar en Android físico: permisos, cámara, captura y reproducción de video/audio, GPS, interacción con mapa y renderizado Lottie. No se considera probado un sensor solo porque exista su código. `adb devices` no detectó ningún dispositivo conectado. Se inició el cliente Windows y se corrigió el fallo de navegación provocado por montar la cámara en una plataforma incompatible.
-
-Limitaciones deliberadas: una foto, un video y una nota por incidente; nuevas capturas reemplazan la selección del borrador. Al abandonar un borrador, sus archivos pueden permanecer en almacenamiento privado. Videos largos consumen memoria porque flet-camera devuelve los bytes de la captura: para la exposición usa clips breves. Borrar los datos o desinstalar la aplicación elimina los registros. La extensión de cámara no admite Windows: allí el formulario muestra un aviso y permite continuar con el resto de funciones. Otros servicios dependen del hardware y sistema; se informa el error. La ejecución web no es el destino de esta entrega.
-
 ## Demostración manual
 
 1. Abrir Inicio y recorrer las cuatro secciones.
