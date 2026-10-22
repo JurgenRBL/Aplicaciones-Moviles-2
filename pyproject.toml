@@ -1,7 +1,7 @@
 [project]
-name = "alerta-segura"
-version = "1.0.0"
-description = "Registro local de incidentes — UDABOL"
+name = "mascotas-perdidas"
+version = "1.1.0"
+description = "Reportes locales de mascotas perdidas y encontradas"
 requires-python = ">=3.10"
 dependencies = [
   "flet==0.86.5", "flet-camera==0.86.5", "flet-map==0.86.5",
@@ -12,7 +12,7 @@ dependencies = [
 [tool.flet]
 org = "bo.edu.udabol"
 bundle_id = "bo.edu.udabol.alertasegura"
-product = "Alerta Segura"
+product = "Mascotas Perdidas"
 company = "Proyecto académico UDABOL"
 
 [tool.flet.app]

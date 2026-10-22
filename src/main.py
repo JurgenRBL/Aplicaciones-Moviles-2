@@ -1,7 +1,9 @@
-"""Alerta Segura: cuatro pantallas y servicios nativos Flet."""
+"""Mascotas Perdidas: reportes locales de animales y su última ubicación."""
 import asyncio
 from pathlib import Path
 import uuid
+import time
+from datetime import datetime
 
 import flet as ft
 import flet_camera as fc
@@ -14,9 +16,9 @@ import flet_video as fv
 import flet_permission_handler as fp
 from storage import Storage, CATEGORIES, PRIORITIES
 
-BLUE = "#122B49"
-RED = "#D9364F"
-NOTICE = "Registros locales. No constituyen una denuncia oficial ni se envían a la Policía."
+BLUE = "#146B66"
+RED = "#DB654D"
+NOTICE = "Tus reportes se guardan en este teléfono. No se publican ni se envían a refugios automáticamente."
 
 
 class App:
@@ -27,18 +29,34 @@ class App:
         self.evidence = {}
         self.recording = None
         self.camera_ready = False
+        self.media_busy = False
+        self.record_started = 0
+        self.record_epoch = 0
+        self.focus_location = None
         self.camera_supported = getattr(page, "web", False) or getattr(page, "platform", None) in (
             ft.PagePlatform.ANDROID, ft.PagePlatform.IOS)
         self.geo = fg.Geolocator()
         self.permissions = fp.PermissionHandler()
         self.recorder = fr.AudioRecorder()
         self.player = fa.Audio()
-        page.services.extend([self.geo, self.permissions, self.recorder, self.player])
-        self.category = ft.Dropdown(label="Categoría", value="Robo", options=[ft.DropdownOption(x) for x in CATEGORIES])
-        self.description = ft.TextField(label="¿Qué ocurrió?", multiline=True, min_lines=3, max_length=2000)
-        self.priority = ft.Dropdown(label="Prioridad", value="Media", options=[ft.DropdownOption(x) for x in PRIORITIES])
-        self.coords = ft.Text("Sin ubicación. Usa GPS o selecciona un punto del mapa.")
-        self.status = ft.Text(color=RED)
+        self.launcher = ft.UrlLauncher()
+        page.services.extend([self.geo, self.permissions, self.recorder, self.player, self.launcher])
+        self.category = ft.Dropdown(label="¿Qué quieres reportar?", value="Mascota perdida", options=[ft.DropdownOption(x) for x in CATEGORIES])
+        self.pet_name = ft.TextField(label="Nombre de la mascota (si lo conoces)", max_length=100)
+        self.species = ft.Dropdown(label="Tipo de animal", value="Perro", options=[ft.DropdownOption(x) for x in ("Perro", "Gato", "Ave", "Otro")])
+        self.landmark = ft.TextField(label="Barrio o lugar de referencia", hint_text="Ej.: plaza principal, frente a la farmacia", max_length=200)
+        self.description = ft.TextField(label="¿Cómo es y dónde la viste?", multiline=True, min_lines=3, max_length=2000)
+        self.priority = ft.Dropdown(label="Urgencia", value="Media", options=[ft.DropdownOption(x) for x in PRIORITIES])
+        self.coords = ft.Text("Marca el lugar donde viste o perdiste a la mascota.")
+        self.status = ft.Text(color=BLUE)
+        self.location_preview = ft.Container()
+        self.record_text = ft.Text("Listo para grabar", color="white", weight=ft.FontWeight.BOLD, size=18, expand=True)
+        self.record_indicator = ft.Container(content=ft.Row([fl.Lottie(src="grabando.json", width=52, height=52, animate=True), self.record_text]), bgcolor=RED, padding=12, border_radius=18, visible=False, animate=ft.Animation(250))
+        self.photo_button = self.button("Tomar foto", self.photo, ft.Icons.PHOTO_CAMERA)
+        self.video_button = self.button("Grabar video", self.video, ft.Icons.VIDEOCAM)
+        self.audio_button = self.button("Grabar nota de voz", self.audio, ft.Icons.MIC)
+        self.camera_button = self.button("Abrir cámara", self.open_camera, ft.Icons.CAMERA_ALT)
+        self.save_button = self.button("Guardar reporte", self.save, ft.Icons.PETS)
         self.camera = fc.Camera(height=240, preview_enabled=True)
         self.attachments = ft.Column()
         self.markers = fm.MarkerLayer(markers=[])
@@ -46,9 +64,10 @@ class App:
         self.map = fm.Map(initial_center=fm.MapLatitudeLongitude(-16.5, -68.15), initial_zoom=13,
             expand=True, on_tap=self.map_tap,
             layers=[fm.TileLayer(url_template="https://tile.openstreetmap.org/{z}/{x}/{y}.png",
-                user_agent_package_name="bo.edu.udabol.alertasegura/1.0 (academic local incident app)",
+                user_agent_package_name="bo.edu.udabol.alertasegura/1.0 (MascotasPerdidas/1.1 local pet reports)",
                 on_image_error=self.tile_error), self.markers])
-        self.body = ft.Container(expand=True, padding=16)
+        self.switcher = ft.AnimatedSwitcher(content=ft.Container(), transition=ft.AnimatedSwitcherTransition.FADE, duration=280, expand=True)
+        self.body = ft.Container(content=self.switcher, expand=True, padding=16)
         self.nav = ft.NavigationBar(selected_index=0, on_change=self.navigate,
             destinations=[ft.NavigationBarDestination(icon=icon, label=label) for icon, label in [
                 (ft.Icons.HOME_OUTLINED, "Inicio"), (ft.Icons.MAP_OUTLINED, "Mapa"),
@@ -69,20 +88,98 @@ class App:
     def button(self, label, handler, icon=None):
         return ft.Button(label, on_click=handler, icon=icon)
 
+    def card(self, controls, color="white"):
+        return ft.Container(content=ft.Column(controls, spacing=12), bgcolor=color,
+            border_radius=22, padding=20)
+
     def home(self):
         return self.column([
-            ft.Container(content=ft.Column([
-                ft.Icon(ft.Icons.SHIELD_OUTLINED, size=64, color="white"),
-                ft.Text("Alerta Segura", size=30, weight=ft.FontWeight.BOLD, color="white"),
-                ft.Text("Documenta un incidente con ubicación y evidencias.", color="white"),
-            ]), bgcolor=BLUE, border_radius=20, padding=24),
-            fl.Lottie(src="confirmacion.json", height=120, animate=True),
-            ft.Text("Tu registro, en un solo lugar", size=22, weight=ft.FontWeight.BOLD),
-            self.button("Registrar un incidente", lambda e: self.show(2), ft.Icons.ADD_LOCATION_ALT),
-            self.button("Explorar el mapa", lambda e: self.show(1), ft.Icons.MAP),
-            self.button("Consultar historial", lambda e: self.show(3), ft.Icons.HISTORY),
-            ft.Text(f"{len(self.storage.all())} incidentes guardados en este dispositivo."),
-            ft.Text(NOTICE, color=RED), ft.Text("UDABOL · Aplicaciones Móviles II", size=12)])
+            self.card([
+                ft.Row([ft.Image(src="perrito.png", width=72, height=72),
+                    ft.Column([ft.Text("Cada huellita", size=21, color="white"),
+                        ft.Text("merece volver a casa", size=21, weight=ft.FontWeight.BOLD, color="white")], expand=True)]),
+                ft.Text("Reporta una mascota perdida, encontrada o vista cerca de ti.", color="white"),
+            ], BLUE),
+            fl.Lottie(src="huellitas.json", height=115, animate=True),
+            ft.Text("Ayudemos a que se reencuentren", size=23, weight=ft.FontWeight.BOLD, color=BLUE),
+            self.button("Reportar una mascota", lambda e: self.show(2), ft.Icons.PETS),
+            self.button("Ver mascotas en el mapa", lambda e: self.show(1), ft.Icons.MAP_OUTLINED),
+            self.button("Mis reportes guardados", lambda e: self.show(3), ft.Icons.FAVORITE_OUTLINE),
+            self.card([ft.Text(f"{len(self.storage.all())} reportes en tu teléfono", size=19, weight=ft.FontWeight.BOLD),
+                ft.Text("1. Describe la mascota  ·  2. Marca el lugar  ·  3. Añade fotos o una nota de voz")], "#FFF0D5"),
+            ft.Text(NOTICE, size=12, color=BLUE)])
+
+    def point_preview(self, coordinates):
+        hint = ft.Text("Último lugar marcado. Puedes acercar el mapa para reconocer las calles.", size=12, color=BLUE)
+        def unavailable(e):
+            hint.value = "No se pudo cargar el mapa. Comprueba Internet o pulsa Abrir en Google Maps."
+            self.page.update()
+        minimap = fm.Map(height=200, initial_center=fm.MapLatitudeLongitude(*coordinates), initial_zoom=16,
+            layers=[fm.TileLayer(url_template="https://tile.openstreetmap.org/{z}/{x}/{y}.png",
+                user_agent_package_name="bo.edu.udabol.alertasegura/MascotasPerdidas-1.1",
+                on_image_error=unavailable),
+                fm.MarkerLayer(markers=[fm.Marker(coordinates=fm.MapLatitudeLongitude(*coordinates),
+                    content=ft.Icon(ft.Icons.PETS, color=RED, size=38))])])
+        return ft.Column([minimap, hint, ft.TextButton("© OpenStreetMap contributors",
+            url="https://www.openstreetmap.org/copyright")], tight=True, spacing=0)
+
+    @staticmethod
+    def display_date(value):
+        try:
+            return datetime.fromisoformat(value).strftime("%d/%m/%Y · %H:%M")
+        except (ValueError, TypeError):
+            return value
+
+    def refresh_location_preview(self):
+        self.location_preview.content = self.point_preview(self.coordinates) if self.coordinates else ft.Text(
+            "Aún no marcaste el lugar. Usa mi ubicación si estás allí, o elígelo en el mapa.", color=BLUE)
+
+    def update_recording_ui(self):
+        active = self.recording
+        self.video_button.content = "Detener video" if active == "video" else "Grabar video"
+        self.audio_button.content = "Detener nota de voz" if active == "audio" else "Grabar nota de voz"
+        self.video_button.icon = ft.Icons.STOP_CIRCLE if active == "video" else ft.Icons.VIDEOCAM
+        self.audio_button.icon = ft.Icons.STOP_CIRCLE if active == "audio" else ft.Icons.MIC
+        self.video_button.disabled = self.media_busy or active == "audio"
+        self.audio_button.disabled = self.media_busy or active == "video"
+        self.photo_button.disabled = bool(active) or self.media_busy
+        self.camera_button.disabled = bool(active) or self.media_busy
+        self.save_button.disabled = bool(active) or self.media_busy
+        self.record_indicator.visible = bool(active) or self.media_busy
+        if self.media_busy:
+            self.record_text.value = "Un momento… procesando grabación"
+        elif active:
+            elapsed = max(0, int(time.monotonic() - self.record_started))
+            self.record_text.value = f"● Grabando {'video' if active == 'video' else 'audio'}  {elapsed // 60:02d}:{elapsed % 60:02d}"
+        self.page.update()
+
+    def begin_recording(self, kind):
+        self.recording = kind
+        self.record_started = time.monotonic()
+        self.record_epoch += 1
+        if hasattr(self.page, "run_task"):
+            self.page.run_task(self.record_clock, self.record_epoch)
+
+    async def record_clock(self, epoch):
+        while self.recording and epoch == self.record_epoch:
+            self.update_recording_ui()
+            await asyncio.sleep(1)
+
+    async def open_external_map(self, coordinates):
+        try:
+            await self.launcher.launch_url(f"https://www.google.com/maps/search/?api=1&query={coordinates[0]},{coordinates[1]}")
+        except Exception as ex:
+            self.message(f"No se pudo abrir el mapa del teléfono: {ex}")
+
+    async def view_report_map(self, item):
+        await self.close_detail(None)
+        self.focus_location = (item["latitude"], item["longitude"])
+        self.map_status.value = item.get("landmark") or "Último lugar registrado de esta mascota."
+        self.show(1)
+        try:
+            await self.map.move_to(destination=fm.MapLatitudeLongitude(*self.focus_location), zoom=16)
+        except Exception:
+            self.message("El lugar está marcado. Espera a que cargue el mapa o abre Google Maps.")
 
     def refresh_markers(self):
         markers = []
@@ -96,22 +193,27 @@ class App:
         self.markers.markers = markers
 
     def form(self):
-        return self.column([ft.Text("Nuevo incidente", size=26, weight=ft.FontWeight.BOLD),
-            ft.Text("La fecha y hora se asignan al guardar."), self.category, self.description, self.priority,
-            self.coords, ft.Row([self.button("Obtener GPS", self.locate), self.button("Elegir en mapa", lambda e: self.show(1))], wrap=True),
-            ft.Text("Evidencias opcionales", size=20, weight=ft.FontWeight.BOLD),
-            self.button("Activar cámara", self.open_camera, ft.Icons.CAMERA_ALT),
-            self.camera if self.camera_supported else ft.Text("La cámara requiere Android, iOS o web. En Windows puedes probar formulario, audio, mapa e historial."),
-            ft.Row([self.button("Tomar fotografía", self.photo), self.button("Grabar / detener video", self.video),
-                self.button("Grabar / detener audio", self.audio)], wrap=True),
-            ft.Text("Detén la grabación antes de guardar o cambiar de pantalla."), self.attachments, self.status,
-            self.button("Guardar incidente", self.save, ft.Icons.SAVE), ft.Text(NOTICE, color=RED)])
+        self.refresh_location_preview()
+        return self.column([ft.Text("Cuéntanos de esa mascota", size=25, color=BLUE, weight=ft.FontWeight.BOLD),
+            ft.Text("Una foto y un lugar claro pueden marcar la diferencia."),
+            self.card([self.category, self.pet_name, self.species, self.description, self.priority]),
+            self.card([ft.Text("¿Dónde fue vista por última vez?", size=19, weight=ft.FontWeight.BOLD, color=BLUE),
+                self.landmark, self.coords, self.location_preview,
+                ft.Row([self.button("Usar mi ubicación", self.locate, ft.Icons.MY_LOCATION),
+                    self.button("Elegir lugar", lambda e: self.show(1), ft.Icons.MAP)], wrap=True)]),
+            self.card([ft.Text("Fotos y recuerdos que ayudan", size=19, weight=ft.FontWeight.BOLD, color=BLUE),
+                ft.Text("Puedes añadir una foto, un video breve y una nota de voz."), self.camera_button,
+                self.camera if self.camera_supported else ft.Text("La cámara está disponible al instalar el APK en Android."),
+                self.record_indicator,
+                ft.Row([self.photo_button, self.video_button, self.audio_button], wrap=True),
+                ft.Text("Durante la grabación verás un contador. Pulsa Detener para adjuntar el archivo.", size=12),
+                self.attachments, self.status]), self.save_button, ft.Text(NOTICE, size=12, color=BLUE)])
 
     def navigate(self, e):
         self.show(e.control.selected_index)
 
     def show(self, index):
-        if self.recording:
+        if self.recording or self.media_busy:
             self.nav.selected_index = 2
             self.message("Detén la grabación antes de cambiar de sección.")
             return
@@ -120,8 +222,12 @@ class App:
             content = self.home()
         elif index == 1:
             self.refresh_markers()
-            content = ft.Column([ft.Text("Mapa de incidentes", size=26), self.map_status,
-                ft.Row([self.button("Actualizar GPS", self.locate), self.button("Centrar en mí", self.recenter)], wrap=True),
+            center = self.focus_location or self.user_location or (self.coordinates if self.coordinates else None)
+            if center:
+                self.map.initial_center = fm.MapLatitudeLongitude(*center)
+                self.map.initial_zoom = 16
+            content = ft.Column([ft.Text("Lugares donde fueron vistas", size=26), self.map_status,
+                ft.Row([self.button("Mi ubicación", self.locate), self.button("Centrar en mí", self.recenter)], wrap=True),
                 self.map, ft.Text("© OpenStreetMap contributors · https://www.openstreetmap.org/copyright", size=11)], expand=True)
         elif index == 2:
             content = self.form()
@@ -129,18 +235,19 @@ class App:
             self.camera_ready = False
         else:
             records = self.storage.all()
-            content = self.column([ft.Text("Historial local", size=26), ft.Text(NOTICE, color=RED)] + [
-                ft.Card(content=ft.ListTile(title=ft.Text(f'{r["category"]} · {r["priority"]}'),
-                    subtitle=ft.Text(f'{r["description"][:100]}\n{r["created"]}\n{r["latitude"]:.5f}, {r["longitude"]:.5f}\n' +
+            content = self.column([ft.Text("Mis reportes", size=26), ft.Text(NOTICE, color=RED)] + [
+                ft.Card(content=ft.ListTile(leading=ft.Icon(ft.Icons.PETS, color=BLUE), title=ft.Text(f'{r.get("pet_name") or r["category"]} · {r.get("species") or "Reporte"}'),
+                    subtitle=ft.Text(f'{r["description"][:100]}\n{self.display_date(r["created"])}\n{r.get("landmark") or "Lugar marcado: abre el reporte para verlo en el mapa"}\n' +
                         " · ".join(label for key, label in [("photo", "Foto"), ("video", "Video"), ("audio", "Audio")] if r[key])),
                     on_click=lambda e, item=r: self.detail(item))) for r in records] +
-                ([] if records else [ft.Text("Todavía no hay incidentes. Registra el primero en Reportar.")]))
-        self.body.content = content
+                ([] if records else [fl.Lottie(src="huellitas.json", height=140, animate=True), ft.Text("Aún no hay reportes. Cada búsqueda comienza con una huellita.")]))
+        self.switcher.content = content
         self.page.update()
 
     def map_tap(self, e):
         self.coordinates = (e.coordinates.latitude, e.coordinates.longitude)
-        self.coords.value = f"Punto elegido: {self.coordinates[0]:.6f}, {self.coordinates[1]:.6f}"
+        self.focus_location = self.coordinates
+        self.coords.value = "Lugar seleccionado. El marcador muestra dónde fue vista la mascota."
         self.show(2)
 
     async def locate(self, e):
@@ -152,7 +259,9 @@ class App:
                 raise ValueError("Permiso de ubicación denegado. Puedes habilitarlo en Ajustes de la aplicación.")
             position = await asyncio.wait_for(self.geo.get_current_position(), timeout=30)
             self.user_location = self.coordinates = (position.latitude, position.longitude)
-            self.coords.value = f"GPS: {position.latitude:.6f}, {position.longitude:.6f}"
+            self.focus_location = self.coordinates
+            self.coords.value = "Ubicación de este teléfono marcada en el mapa."
+            self.refresh_location_preview()
             self.map_status.value = self.coords.value
             self.refresh_markers()
             self.page.update()
@@ -164,7 +273,7 @@ class App:
 
     async def recenter(self, e):
         if self.user_location is None:
-            self.message("Obtén primero tu ubicación con Actualizar GPS.")
+            self.message("Obtén primero tu ubicación con Mi ubicación.")
             return
         try:
             await self.map.move_to(destination=fm.MapLatitudeLongitude(*self.user_location), zoom=16)
@@ -209,6 +318,10 @@ class App:
             self.message(f"No se pudo tomar la foto: {ex}")
 
     async def video(self, e):
+        if self.media_busy:
+            return
+        self.media_busy = True
+        self.update_recording_ui()
         try:
             if self.recording == "video":
                 data = await self.camera.stop_video_recording()
@@ -221,12 +334,23 @@ class App:
                 raise ValueError("Activa primero la cámara.")
             else:
                 await self.camera.start_video_recording()
-                self.recording = "video"
+                self.begin_recording("video")
                 self.message("Grabando video. Pulsa otra vez para detener.")
         except Exception as ex:
+            if self.recording == "video":
+                self.recording = None
+                self.camera_ready = False
             self.message(f"Error de video: {ex}")
 
+        finally:
+            self.media_busy = False
+            self.update_recording_ui()
+
     async def audio(self, e):
+        if self.media_busy:
+            return
+        self.media_busy = True
+        self.update_recording_ui()
         try:
             if self.recording == "audio":
                 path = await self.recorder.stop_recording()
@@ -245,10 +369,20 @@ class App:
                 path = str(self.storage.root / "grabacion-temporal.wav")
                 if not await self.recorder.start_recording(output_path=path):
                     raise ValueError("El micrófono no pudo iniciar.")
-                self.recording = "audio"
+                self.begin_recording("audio")
                 self.message("Grabando audio. Pulsa otra vez para detener.")
         except Exception as ex:
+            if self.recording == "audio":
+                try:
+                    await self.recorder.cancel_recording()
+                except Exception:
+                    pass
+                self.recording = None
             self.message(f"Error de audio: {ex}")
+
+        finally:
+            self.media_busy = False
+            self.update_recording_ui()
 
     async def play_audio(self, path):
         try:
@@ -278,43 +412,53 @@ class App:
 
     def save(self, e):
         try:
-            if self.recording:
+            if self.recording or self.media_busy:
                 raise ValueError("Detén la grabación antes de guardar.")
-            self.storage.save(self.category.value, self.description.value or "", self.coordinates, self.priority.value, self.evidence)
+            self.storage.save(self.category.value, self.description.value or "", self.coordinates, self.priority.value, self.evidence,
+                self.pet_name.value or "", self.species.value or "", self.landmark.value or "")
         except Exception as ex:
             self.message(f"No se guardó: {ex}")
             return
         self.description.value = ""
+        self.pet_name.value = ""
+        self.landmark.value = ""
         self.coordinates = None
-        self.coords.value = "Sin ubicación. Usa GPS o selecciona un punto del mapa."
+        self.coords.value = "Marca el lugar donde viste o perdiste a la mascota."
         self.evidence = {}
         self.attachments.controls = []
         self.status.value = ""
         self.show(3)
-        self.page.show_dialog(ft.AlertDialog(title=ft.Text("Incidente guardado"),
+        self.page.show_dialog(ft.AlertDialog(title=ft.Text("¡Una huellita más para ayudar!"),
             content=ft.Column([fl.Lottie(src="confirmacion.json", height=130, animate=True), ft.Text(NOTICE)], tight=True),
             actions=[self.button("Aceptar", lambda e: self.page.pop_dialog())]))
 
     def detail(self, item):
-        self.page.show_dialog(ft.AlertDialog(title=ft.Text(f'{item["category"]} · Prioridad {item["priority"]}'),
+        self.page.show_dialog(ft.AlertDialog(title=ft.Text(item.get("pet_name") or item["category"]),
             content=ft.Container(width=420, content=ft.Column([
-                ft.Text(item["description"]), ft.Text(item["created"]),
-                ft.Text(f'{item["latitude"]:.6f}, {item["longitude"]:.6f}'),
+                ft.Text(f'{item["category"]} · {item.get("species") or "Animal"} · Urgencia {item["priority"]}'),
+                ft.Text(item["description"]), ft.Text(self.display_date(item["created"])),
+                ft.Text(item.get("landmark") or "Último lugar registrado", weight=ft.FontWeight.BOLD),
+                self.point_preview((item["latitude"], item["longitude"])),
+                self.button("Ver ubicación en el mapa", lambda e: self.page.run_task(self.view_report_map, item), ft.Icons.MAP),
+                self.button("Abrir en Google Maps", lambda e: self.page.run_task(self.open_external_map, (item["latitude"], item["longitude"])), ft.Icons.DIRECTIONS),
                 *self.evidence_controls(item), ft.Text(NOTICE, size=12)], scroll=ft.ScrollMode.AUTO, tight=True)),
             actions=[self.button("Cerrar", self.close_detail)]))
 
     async def close_detail(self, e):
-        await self.player.pause()
+        try:
+            await self.player.pause()
+        except Exception:
+            pass
         self.page.pop_dialog()
 
 
 async def main(page: ft.Page):
-    page.title = "Alerta Segura"
+    page.title = "Mascotas Perdidas"
     page.theme_mode = ft.ThemeMode.LIGHT
     page.theme = ft.Theme(color_scheme_seed=BLUE)
-    page.bgcolor = "#F3F6FA"
+    page.bgcolor = "#F8F6EF"
     page.padding = 0
-    page.appbar = ft.AppBar(title=ft.Text("Alerta Segura", color="white"), bgcolor=BLUE)
+    page.appbar = ft.AppBar(leading=ft.Image(src="perrito.png", width=44, height=44), title=ft.Text("Mascotas Perdidas", color="white"), bgcolor=BLUE)
     paths = ft.StoragePaths()
     page.services.append(paths)
     try:

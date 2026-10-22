@@ -7,7 +7,7 @@ from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 
-CATEGORIES = ("Robo", "Acoso", "Violencia", "Accidente", "Otro")
+CATEGORIES = ("Mascota perdida", "Mascota encontrada", "Avistamiento", "Animal en riesgo", "Otro")
 PRIORITIES = ("Baja", "Media", "Alta")
 
 
@@ -22,6 +22,10 @@ class Storage:
                 id TEXT PRIMARY KEY, category TEXT NOT NULL, description TEXT NOT NULL,
                 created TEXT NOT NULL, latitude REAL NOT NULL, longitude REAL NOT NULL,
                 priority TEXT NOT NULL, photo TEXT, video TEXT, audio TEXT)""")
+            columns = {row[1] for row in db.execute("PRAGMA table_info(incidents)")}
+            for column in ("pet_name", "species", "landmark"):
+                if column not in columns:
+                    db.execute(f"ALTER TABLE incidents ADD COLUMN {column} TEXT NOT NULL DEFAULT ''")
 
     @contextmanager
     def connect(self):
@@ -41,7 +45,7 @@ class Storage:
         shutil.copyfile(source, target)
         return str(target)
 
-    def save(self, category, description, coordinates, priority, evidence):
+    def save(self, category, description, coordinates, priority, evidence, pet_name="", species="", landmark=""):
         if category not in CATEGORIES or priority not in PRIORITIES:
             raise ValueError("Selecciona categoría y prioridad válidas.")
         if not description.strip() or len(description.strip()) > 2000:
@@ -56,9 +60,12 @@ class Storage:
                 raise ValueError("La evidencia no está disponible en el almacenamiento local.")
         identifier = uuid.uuid4().hex
         with self.connect() as db:
-            db.execute("INSERT INTO incidents VALUES (?,?,?,?,?,?,?,?,?,?)", (
+            db.execute("""INSERT INTO incidents
+                (id,category,description,created,latitude,longitude,priority,photo,video,audio,pet_name,species,landmark)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""", (
                 identifier, category, description.strip(), datetime.now().astimezone().isoformat(timespec="seconds"),
-                lat, lon, priority, evidence.get("photo"), evidence.get("video"), evidence.get("audio")))
+                lat, lon, priority, evidence.get("photo"), evidence.get("video"), evidence.get("audio"),
+                pet_name.strip()[:100], species.strip()[:40], landmark.strip()[:200]))
         return identifier
 
     def all(self):
