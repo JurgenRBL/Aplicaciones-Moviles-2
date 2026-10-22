@@ -1,0 +1,33 @@
+[project]
+name = "alerta-segura"
+version = "1.0.0"
+description = "Registro local de incidentes — UDABOL"
+requires-python = ">=3.10"
+dependencies = [
+  "flet==0.86.5", "flet-camera==0.86.5", "flet-map==0.86.5",
+  "flet-geolocator==0.86.5", "flet-lottie==0.86.5", "flet-audio==0.86.5",
+  "flet-audio-recorder==0.86.5", "flet-video==0.86.5", "flet-permission-handler==0.86.5"
+]
+
+[tool.flet]
+org = "bo.edu.udabol"
+bundle_id = "bo.edu.udabol.alertasegura"
+product = "Alerta Segura"
+company = "Proyecto académico UDABOL"
+
+[tool.flet.app]
+path = "src"
+
+[tool.flet.flutter.pubspec.dependency_overrides]
+jni = "1.1.0"
+
+[tool.flet.android]
+min_sdk_version = 24
+
+[tool.flet.android.permission]
+"android.permission.INTERNET" = true
+"android.permission.CAMERA" = true
+"android.permission.RECORD_AUDIO" = true
+"android.permission.ACCESS_COARSE_LOCATION" = true
+"android.permission.ACCESS_FINE_LOCATION" = true
+
